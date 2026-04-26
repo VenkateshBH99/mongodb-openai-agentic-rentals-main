@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # MongoDB AI Rental Search Demo
 
 A modern rental property search application powered by MongoDB Atlas Vector Search and OpenAI's Agents SDK for intelligent, conversational property discovery.
@@ -414,3 +415,6 @@ db.rentals.aggregate([
 ## License
 
 This project is for demonstration purposes. Check individual dependencies for their respective licenses.
+=======
+# mongodb-openai-agentic-rentals-main
+>>>>>>> f34af24c7b3f2c8a6a76671b23a0a662b254b3cd
