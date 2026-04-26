@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RentAI - AI-Powered Rental Discovery</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Markdown rendering libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="nav-brand">
+                <i class="fas fa-home"></i>
+                <span>RentAI</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-link active">Explore</a>
+                <a href="#" class="nav-link" id="navRecommendations">Recommendations</a>
+                <a href="#" class="nav-link">Saved</a>
+                <a href="#" class="nav-link">Help</a>
+            </nav>
+            <div class="nav-actions">
+                <button class="btn-secondary">Sign In</button>
+                <button class="btn-primary">Sign Up</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <h1 class="hero-title">Find Your Perfect Rental with AI</h1>
+                <p class="hero-subtitle">Discover amazing places powered by intelligent recommendations</p>
+                
+                <!-- Search Bar -->
+                <div class="search-container">
+                    <div class="search-bar">
+                        <div class="search-field">
+                            <i class="fas fa-map-marker-alt"></i>
+                            <input type="text" id="locationInput" placeholder="Where are you going?" />
+                        </div>
+                        <div class="search-field">
+                            <i class="fas fa-calendar"></i>
+                            <input type="date" id="checkinDate" />
+                        </div>
+                        <div class="search-field">
+                            <i class="fas fa-calendar"></i>
+                            <input type="date" id="checkoutDate" />
+                        </div>
+                        <div class="search-field">
+                            <i class="fas fa-users"></i>
+                            <select id="guestCount">
+                                <option value="1">1 Guest</option>
+                                <option value="2">2 Guests</option>
+                                <option value="3">3 Guests</option>
+                                <option value="4">4 Guests</option>
+                                <option value="5">5+ Guests</option>
+                            </select>
+                        </div>
+                        <button class="search-btn" onclick="searchRentals()">
+                            <i class="fas fa-search"></i>
+                            Search
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters -->
+    <section class="filters-section">
+        <div class="container">
+            <div class="filters">
+                <div class="filter-group">
+                    <label>Property Type</label>
+                    <select id="propertyType">
+                        <option value="">All Types</option>
+                        <option value="Apartment">Apartment</option>
+                        <option value="House">House</option>
+                        <option value="Condominium">Condominium</option>
+                        <option value="Loft">Loft</option>
+                        <option value="Villa">Villa</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Price Range</label>
+                    <div class="price-range">
+                        <input type="number" id="minPrice" placeholder="Min" />
+                        <span>-</span>
+                        <input type="number" id="maxPrice" placeholder="Max" />
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Bedrooms</label>
+                    <select id="bedrooms">
+                        <option value="">Any</option>
+                        <option value="1">1+</option>
+                        <option value="2">2+</option>
+                        <option value="3">3+</option>
+                        <option value="4">4+</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Features</label>
+                    <div class="feature-tags">
+                        <button class="tag" data-filter="superhost">Superhost</button>
+                        <button class="tag" data-filter="instant">Instant Book</button>
+                        <button class="tag" data-filter="wifi">WiFi</button>
+                        <button class="tag" data-filter="kitchen">Kitchen</button>
+                    </div>
+                </div>
+                
+                <button class="filter-apply-btn" onclick="applyFilters()">Apply Filters</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Results Section -->
+    <section class="results-section">
+        <div class="container">
+            <div class="results-header">
+                <h2>Available Rentals</h2>
+                <div class="view-options">
+                    <button class="view-btn active" data-view="grid">
+                        <i class="fas fa-th-large"></i>
+                    </button>
+                    <button class="view-btn" data-view="list">
+                        <i class="fas fa-list"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Loading State -->
+            <div id="loadingSpinner" class="loading-spinner">
+                <div class="spinner"></div>
+                <p>Finding amazing rentals...</p>
+            </div>
+            
+            <!-- Results Grid -->
+            <div id="resultsGrid" class="results-grid">
+                <!-- Rental cards will be populated here -->
+            </div>
+            
+            <!-- Pagination -->
+            <div id="pagination" class="pagination">
+                <!-- Pagination will be populated here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- ALS Recommendations Section -->
+    <section id="recommendationsSection" class="recommendations-section" style="display: none;">
+        <div class="container">
+            <div class="recommendations-header">
+                <div class="rec-title-row">
+                    <h2><i class="fas fa-chart-line"></i> Recommended For You</h2>
+                    <span class="rec-badge">ALS Model</span>
+                </div>
+                <p class="rec-subtitle">Personalized picks from our collaborative filtering model — no AI involved</p>
+            </div>
+            <div class="rec-input-row">
+                <div class="rec-search">
+                    <i class="fas fa-user"></i>
+                    <input type="text" id="recUserIdInput" placeholder="Enter your user ID (e.g. 51483096)" />
+                    <button class="btn-primary" onclick="loadRecommendations()">Get Recommendations</button>
+                </div>
+            </div>
+            <div id="recLoading" class="loading-spinner" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading recommendations...</p>
+            </div>
+            <div id="recEmptyState" class="empty-state" style="display: none;">
+                <div class="empty-message">
+                    <i class="fas fa-magic"></i>
+                    <h3>Enter your user ID to see recommendations</h3>
+                    <p>Our ALS collaborative filtering model suggests rentals based on user interaction patterns.</p>
+                </div>
+            </div>
+            <div id="recResultsGrid" class="results-grid">
+                <!-- Recommendation cards rendered here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Saved Rentals Section -->
+    <section id="savedRentalsSection" class="saved-rentals-section" style="display: none;">
+        <div class="container">
+            <div class="saved-header">
+                <h2><i class="fas fa-heart"></i> My Saved Rentals</h2>
+                <p class="saved-subtitle">Properties you've bookmarked for later</p>
+            </div>
+            
+            <!-- Auth Required Message -->
+            <div id="savedAuthRequired" class="auth-required" style="display: none;">
+                <div class="auth-message">
+                    <i class="fas fa-lock"></i>
+                    <h3>Sign in to view your saved rentals</h3>
+                    <p>Create an account or sign in to save and access your favorite properties.</p>
+                    <div class="auth-actions">
+                        <button class="btn-primary" onclick="showSignIn()">Sign In</button>
+                        <button class="btn-secondary" onclick="showSignUp()">Sign Up</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Saved Rentals Loading -->
+            <div id="savedLoadingSpinner" class="loading-spinner" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading your saved rentals...</p>
+            </div>
+            
+            <!-- Empty Saved State -->
+            <div id="emptySavedState" class="empty-state" style="display: none;">
+                <div class="empty-message">
+                    <i class="fas fa-heart-broken"></i>
+                    <h3>No saved rentals yet</h3>
+                    <p>Start exploring and save properties you like by clicking the heart icon.</p>
+                    <button class="btn-primary" onclick="showExploreTab()">Explore Rentals</button>
+                </div>
+            </div>
+            
+            <!-- Saved Rentals Grid -->
+            <div id="savedRentalsGrid" class="results-grid">
+                <!-- Saved rental cards will be populated here -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Floating AI Assistant -->
+    <div id="aiAssistant" class="ai-assistant">
+        <div class="ai-assistant-header">
+            <div class="ai-avatar">
+                <i class="fas fa-robot"></i>
+            </div>
+            <div class="ai-info">
+                <h4>RentAI Assistant</h4>
+                <span class="ai-status">Online</span>
+            </div>
+            <div class="ai-controls">
+                <button class="ai-minimize" onclick="minimizeAssistant()">
+                    <i class="fas fa-minus"></i>
+                </button>
+                <button class="ai-close" onclick="closeAssistant()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+        
+        <div class="ai-assistant-body">
+            <div id="chatMessages" class="chat-messages">
+                <div class="message ai-message">
+                    <div class="message-content">
+                        👋 Hi! I'm your AI rental assistant. I can help you find the perfect place to stay. What are you looking for?
+                    </div>
+                    <div class="message-time">Just now</div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <input type="text" id="chatInput" placeholder="Ask me anything about rentals..." />
+                <button id="sendButton" onclick="sendMessage()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Assistant Toggle Button -->
+    <button id="aiToggle" class="ai-toggle" onclick="toggleAssistant()">
+        <i class="fas fa-comments"></i>
+        <span class="ai-notification">1</span>
+    </button>
+
+    <!-- Scripts -->
+    <script src="script.js"></script>
+</body>
+</html>

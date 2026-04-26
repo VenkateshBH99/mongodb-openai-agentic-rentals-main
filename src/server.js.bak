@@ -1,0 +1,181 @@
+import { Elysia } from 'elysia';
+import { swagger } from '@elysiajs/swagger';
+import { staticPlugin } from '@elysiajs/static';
+import { database } from './config/database.js';
+import { RentalModel } from './models/rental.js';
+import { UserModel } from './models/user.js';
+import { ConversationModel } from './models/conversation.js';
+import { rentalRoutes, searchRoutes, statsRoutes, initializeController } from './routes/rental.routes.js';
+import { chatRoutes } from './routes/chat.routes.js';
+import { authRoutes } from './routes/auth.routes.js';
+import { corsMiddleware } from './middleware/cors.js';
+import { errorHandler } from './middleware/errorHandler.js';
+import { logger } from './middleware/logger.js';
+import { recommendationRoutes } from './routes/recommendation.routes.js';
+import { recommendationService } from './services/recommendation.service.js';
+
+// Initialize database connection
+await database.connect();
+
+// Ensure indexes on all collections
+await Promise.all([
+  RentalModel.ensureIndexes(),
+  UserModel.ensureIndexes(),
+  ConversationModel.ensureIndexes(),
+]);
+
+// Initialize controllers after database connection
+initializeController();
+
+// Load ALS recommendation model
+recommendationService.load();
+
+// Graceful shutdown handling
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await database.disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await database.disconnect();
+  process.exit(0);
+});
+
+// Create Elysia app with plugins and middleware
+const app = new Elysia()
+  // Serve static files from public directory
+  .use(staticPlugin({
+    assets: 'public',
+    prefix: '/'
+  }))
+  
+  // Add Swagger documentation
+  .use(swagger({
+    documentation: {
+      info: {
+        title: 'Rental App API',
+        version: '1.0.0',
+        description: 'AI-powered rental application API built with Elysia.js and MongoDB Atlas'
+      },
+      tags: [
+        { name: 'Rentals', description: 'Rental property operations' },
+        { name: 'Search', description: 'Search and filtering' },
+        { name: 'Analytics', description: 'Statistics and analytics' },
+        { name: 'Chat', description: 'AI chat and RAG operations' },
+        { name: 'Auth', description: 'User authentication and profiles' },
+        { name: 'Health', description: 'Health checks' }
+      ]
+    }
+  }))
+  
+  // Add middleware
+  .use(corsMiddleware)
+  .use(logger)
+  .use(errorHandler)
+  
+  // Serve index.html at root
+  .get('/', () => Bun.file('public/index.html'))
+  
+  // API info endpoint
+  .get('/api', () => ({
+    message: '🏠 Rental App API powered by Elysia.js & MongoDB Atlas',
+    version: '1.0.0',
+    features: [
+      'Full CRUD operations for rentals',
+      'Advanced search with multiple filters',
+      'AI-powered RAG chat assistant',
+      'Vector search with MongoDB Atlas',
+      'Conversation storage in MongoDB',
+      'Optimized data projection for frontend',
+      'Real-time statistics and analytics',
+      'Input validation and error handling',
+      'CORS support for web applications',
+      'Swagger API documentation'
+    ],
+    endpoints: {
+      'GET /': 'API information',
+      'GET /swagger': 'API documentation',
+      'GET /rentals': 'List all rentals with filters',
+      'GET /rentals/:id': 'Get rental by ID',  
+      'POST /rentals': 'Create new rental',
+      'PUT /rentals/:id': 'Update rental',
+      'DELETE /rentals/:id': 'Delete rental',
+      'GET /search': 'Advanced search rentals',
+      'GET /stats': 'Get rental statistics',
+      'POST /chat': 'Chat with AI assistant (supports optional auth)',
+      'GET /chat/history/:sessionId': 'Get conversation history',
+      'DELETE /chat/history/:sessionId': 'Delete conversation',
+      'POST /auth/register': 'Register new user',
+      'POST /auth/login': 'Login user',
+      'GET /auth/profile': 'Get user profile (auth required)',
+      'PUT /auth/profile': 'Update user profile (auth required)',
+      'GET /auth/validate': 'Validate JWT token',
+      'POST /auth/logout': 'Logout user',
+      'POST /auth/saved-rentals/:id': 'Save rental (auth required)',
+      'DELETE /auth/saved-rentals/:id': 'Remove saved rental (auth required)',
+      'GET /auth/saved-rentals': 'Get saved rentals (auth required)',
+      'GET /auth/saved-rentals/:id/check': 'Check if rental is saved (auth required)',
+      'GET /health': 'Health check'
+    },
+    documentation: '/swagger'
+  }), {
+    detail: {
+      summary: 'API Information',
+      description: 'Get information about the Rental App API',
+      tags: ['Health']
+    }
+  })
+  
+  // Health check endpoint
+  .get('/health', async () => {
+    try {
+      await database.ping();
+      const collection = database.getRentalsCollection();
+      const count = await collection.countDocuments();
+      
+      return {
+        status: 'healthy',
+        database: 'connected',
+        total_rentals: count,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        database: 'disconnected',
+        error: error.message,
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+      };
+    }
+  }, {
+    detail: {
+      summary: 'Health Check',
+      description: 'Check API and database health status',
+      tags: ['Health']
+    }
+  })
+  
+  // Register route modules
+  .use(rentalRoutes)
+  .use(searchRoutes)
+  .use(statsRoutes)
+  .use(chatRoutes)
+  .use(recommendationRoutes);
+
+// Register auth routes (using function-based approach)
+authRoutes(app);
+
+app
+  
+  // Start server
+  .listen(3001);
+
+console.log('🚀 Rental API is running at http://localhost:3001');
+console.log('📚 API Documentation available at http://localhost:3001/swagger');
+console.log('❤️  Health check available at http://localhost:3001/health');
+
+export default app;

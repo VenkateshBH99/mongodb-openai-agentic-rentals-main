@@ -1,0 +1,2562 @@
+// Global state management
+const AppState = {
+    currentPage: 1,
+    currentFilters: {},
+    currentSearchParams: {}, // Store main search parameters
+    rentals: [],
+    isLoading: false,
+    aiAssistantVisible: false,
+    aiAssistantMinimized: false,
+    chatSessionId: null, // Track conversation session
+    searchMode: false, // Track if we're in AI-driven search mode
+    searchContext: null, // Store context about current AI search
+    currentProperty: null, // Store currently viewed property for AI context
+    user: null, // Store authenticated user info
+    authToken: null // Store JWT token
+};
+
+// API Configuration  
+const API_BASE = window.location.origin;
+console.log('API_BASE:', API_BASE); // Debug log
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+    initializeApp();
+    initializeDraggableAssistant();
+    loadInitialRentals();
+});
+
+// Initialize application
+function initializeApp() {
+    // Set default dates
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    
+    document.getElementById('checkinDate').value = today.toISOString().split('T')[0];
+    document.getElementById('checkoutDate').value = tomorrow.toISOString().split('T')[0];
+    
+    // Initialize filter tags
+    initializeFilterTags();
+    
+    // Initialize view switcher
+    initializeViewSwitcher();
+}
+
+// Initialize filter tags
+function initializeFilterTags() {
+    const tags = document.querySelectorAll('.tag');
+    tags.forEach(tag => {
+        tag.addEventListener('click', function() {
+            this.classList.toggle('active');
+        });
+    });
+}
+
+// Initialize view switcher
+function initializeViewSwitcher() {
+    const viewButtons = document.querySelectorAll('.view-btn');
+    viewButtons.forEach(btn => {
+        btn.addEventListener('click', function() {
+            viewButtons.forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            
+            const view = this.dataset.view;
+            const grid = document.getElementById('resultsGrid');
+            
+            if (view === 'list') {
+                grid.classList.add('list-view');
+            } else {
+                grid.classList.remove('list-view');
+            }
+        });
+    });
+}
+
+// Load initial rentals
+async function loadInitialRentals() {
+    showLoading(true);
+    
+    try {
+        const response = await fetch(`${API_BASE}/rentals?limit=12&sortBy=price&sortOrder=1`);
+        const data = await response.json();
+        
+        if (data.success) {
+            AppState.rentals = data.data;
+            renderRentals(data.data);
+            renderPagination(data.pagination);
+        } else {
+            showError('Failed to load rentals');
+        }
+    } catch (error) {
+        console.error('Error loading rentals:', error);
+        showError('Failed to connect to the server');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Search rentals
+async function searchRentals() {
+    const location = document.getElementById('locationInput').value;
+    const checkin = document.getElementById('checkinDate').value;
+    const checkout = document.getElementById('checkoutDate').value;
+    const guests = document.getElementById('guestCount').value;
+    
+    // Store search parameters in global state
+    AppState.currentSearchParams = {
+        location: location || '',
+        checkin: checkin || '',
+        checkout: checkout || '',
+        guests: guests || '1'
+    };
+    
+    // Build search parameters
+    const params = new URLSearchParams();
+    if (location) params.append('location', location);
+    
+    // Add current filters first
+    Object.keys(AppState.currentFilters).forEach(key => {
+        if (AppState.currentFilters[key]) {
+            params.append(key, AppState.currentFilters[key]);
+        }
+    });
+    
+    // Add guests parameter only if not already set by filters
+    if (guests && guests !== '1' && !AppState.currentFilters.min_accommodates) {
+        params.append('min_accommodates', guests);
+    }
+    
+    params.append('limit', '12');
+    params.append('sortBy', 'price');
+    params.append('sortOrder', '1');
+    
+    showLoading(true);
+    
+    try {
+        const response = await fetch(`${API_BASE}/search?${params.toString()}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            AppState.rentals = data.data;
+            renderRentals(data.data);
+            renderPagination(data.pagination);
+            
+            // Add AI assistant message
+            addAIMessage(`Found ${data.pagination.total} rentals ${location ? `in ${location}` : ''} for ${guests} guest${guests !== '1' ? 's' : ''}!`);
+        } else {
+            showError('Search failed');
+        }
+    } catch (error) {
+        console.error('Error searching rentals:', error);
+        showError('Search failed');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Apply filters
+async function applyFilters() {
+    const filters = {
+        property_type: document.getElementById('propertyType').value,
+        min_price: document.getElementById('minPrice').value,
+        max_price: document.getElementById('maxPrice').value,
+        min_bedrooms: document.getElementById('bedrooms').value
+    };
+    
+    // Get active feature tags
+    const activeTags = document.querySelectorAll('.tag.active');
+    activeTags.forEach(tag => {
+        const filter = tag.dataset.filter;
+        if (filter === 'superhost') filters.superhost_only = 'true';
+        if (filter === 'instant') filters.instant_bookable = 'true';
+    });
+    
+    AppState.currentFilters = filters;
+    AppState.currentPage = 1;
+    
+    // Build search parameters - include stored search params
+    const params = new URLSearchParams();
+    
+    // Add stored search parameters first
+    if (AppState.currentSearchParams.location) {
+        params.append('location', AppState.currentSearchParams.location);
+    }
+    
+    // Add filters
+    Object.keys(filters).forEach(key => {
+        if (filters[key]) {
+            params.append(key, filters[key]);
+        }
+    });
+    
+    // Add guests parameter only if not already set by filters
+    if (AppState.currentSearchParams.guests && AppState.currentSearchParams.guests !== '1' && !filters.min_accommodates) {
+        params.append('min_accommodates', AppState.currentSearchParams.guests);
+    }
+    
+    params.append('limit', '12');
+    params.append('page', '1');
+    
+    showLoading(true);
+    
+    try {
+        const response = await fetch(`${API_BASE}/rentals?${params.toString()}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            AppState.rentals = data.data;
+            renderRentals(data.data);
+            renderPagination(data.pagination);
+        } else {
+            showError('Failed to apply filters');
+        }
+    } catch (error) {
+        console.error('Error applying filters:', error);
+        showError('Failed to apply filters');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Render rentals
+function renderRentals(rentals) {
+    const grid = document.getElementById('resultsGrid');
+    
+    if (rentals.length === 0) {
+        grid.innerHTML = `
+            <div class="no-results">
+                <h3>No rentals found</h3>
+                <p>Try adjusting your search criteria</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = rentals.map(rental => `
+        <div class="rental-card" onclick="viewRental('${rental._id}')">
+            <div class="rental-image">
+                <img src="${rental.images?.picture_url || '/place_holder.png?v=1'}" 
+                     alt="${rental.name}" 
+                     onerror="this.src='/place_holder.png?v=1'" />
+                ${rental.host?.host_is_superhost ? '<div class="rental-badge">Superhost</div>' : ''}
+            </div>
+            <div class="rental-content">
+                <div class="rental-header">
+                    <div>
+                        <div class="rental-title">${rental.name || 'Rental Property'}</div>
+                        <div class="rental-location">
+                            <i class="fas fa-map-marker-alt"></i>
+                            ${rental.address?.neighbourhood || rental.address?.market || rental.address?.country || 'Location not specified'}
+                        </div>
+                    </div>
+                    ${rental.review_scores?.review_scores_rating ? `
+                        <div class="rental-rating">
+                            <i class="fas fa-star"></i>
+                            ${(rental.review_scores.review_scores_rating / 20).toFixed(1)}
+                        </div>
+                    ` : ''}
+                </div>
+                <div class="rental-features">
+                    ${rental.bedrooms ? `<span><i class="fas fa-bed"></i> ${rental.bedrooms} bed${rental.bedrooms !== 1 ? 's' : ''}</span>` : ''}
+                    ${rental.bathrooms ? `<span><i class="fas fa-bath"></i> ${rental.bathrooms} bath${rental.bathrooms !== 1 ? 's' : ''}</span>` : ''}
+                    ${rental.accommodates ? `<span><i class="fas fa-users"></i> ${rental.accommodates} guests</span>` : ''}
+                </div>
+                <div class="rental-price">
+                    <div>
+                        <span class="price">$${rental.price || 0}</span>
+                        <span class="price-period">/night</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Render pagination
+function renderPagination(pagination) {
+    const container = document.getElementById('pagination');
+    
+    if (!pagination || pagination.totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    let paginationHTML = '';
+    
+    // Previous button
+    paginationHTML += `
+        <button onclick="changePage(${pagination.page - 1})" 
+                ${pagination.page <= 1 ? 'disabled' : ''}>
+            <i class="fas fa-chevron-left"></i>
+        </button>
+    `;
+    
+    // Page numbers
+    const startPage = Math.max(1, pagination.page - 2);
+    const endPage = Math.min(pagination.totalPages, pagination.page + 2);
+    
+    for (let i = startPage; i <= endPage; i++) {
+        paginationHTML += `
+            <button onclick="changePage(${i})" 
+                    ${i === pagination.page ? 'class="active"' : ''}>
+                ${i}
+            </button>
+        `;
+    }
+    
+    // Next button
+    paginationHTML += `
+        <button onclick="changePage(${pagination.page + 1})" 
+                ${pagination.page >= pagination.totalPages ? 'disabled' : ''}>
+            <i class="fas fa-chevron-right"></i>
+        </button>
+    `;
+    
+    container.innerHTML = paginationHTML;
+}
+
+// Change page
+async function changePage(page) {
+    if (page < 1) return;
+    
+    AppState.currentPage = page;
+    
+    const params = new URLSearchParams();
+    
+    // Add stored search parameters
+    if (AppState.currentSearchParams.location) {
+        params.append('location', AppState.currentSearchParams.location);
+    }
+    
+    // Add current filters
+    Object.keys(AppState.currentFilters).forEach(key => {
+        if (AppState.currentFilters[key]) {
+            params.append(key, AppState.currentFilters[key]);
+        }
+    });
+    
+    // Add guests parameter only if not already set by filters
+    if (AppState.currentSearchParams.guests && AppState.currentSearchParams.guests !== '1' && !AppState.currentFilters.min_accommodates) {
+        params.append('min_accommodates', AppState.currentSearchParams.guests);
+    }
+    
+    params.append('limit', '12');
+    params.append('page', page.toString());
+    
+    showLoading(true);
+    
+    try {
+        const response = await fetch(`${API_BASE}/rentals?${params.toString()}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            AppState.rentals = data.data;
+            renderRentals(data.data);
+            renderPagination(data.pagination);
+            
+            // Scroll to top of results
+            document.querySelector('.results-section').scrollIntoView({ behavior: 'smooth' });
+        }
+    } catch (error) {
+        console.error('Error changing page:', error);
+        showError('Failed to load page');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// View rental details
+async function viewRental(id) {
+    try {
+        const response = await fetch(`${API_BASE}/rentals/${id}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            showRentalModal(data.data);
+        } else {
+            showError('Failed to load rental details');
+        }
+    } catch (error) {
+        console.error('Error loading rental details:', error);
+        showError('Failed to load rental details');
+    }
+}
+
+// Show rental modal (placeholder for now)
+function showRentalModal(rental) {
+    // Store property in global state for AI context
+    AppState.currentProperty = rental;
+    
+    // Add property context to chat and ask for assistance
+    addAIMessage(`Great choice! I can see you're interested in **${rental.name}**. Would you like me to help you with booking, find similar properties, or answer questions about this rental?`, true);
+    
+    // Ensure AI assistant is visible
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+}
+
+// Create property context HTML for chat
+function createPropertyContextHTML(property) {
+    if (!property) return '';
+    
+    const location = `${property.address?.neighbourhood || property.address?.market || ''}, ${property.address?.country || ''}`.replace(/^, /, '');
+    const rating = property.review_scores?.review_scores_rating ? (property.review_scores.review_scores_rating / 20).toFixed(1) : null;
+    const imageUrl = property.images?.picture_url || '/place_holder.png?v=1';
+    
+    return `
+        <div class="property-context">
+            <div class="property-context-header">
+                <div class="property-context-icon">
+                    <i class="fas fa-home"></i>
+                </div>
+                <div>
+                    <div class="property-context-title">Property Context</div>
+                    <div class="property-context-subtitle">Currently viewing this rental</div>
+                </div>
+            </div>
+            <div class="property-context-content">
+                <img src="${imageUrl}" alt="${property.name}" class="property-context-image" onerror="this.src='/place_holder.png?v=1'" />
+                <div class="property-context-details">
+                    <div class="property-context-name">${property.name || 'Rental Property'}</div>
+                    <div class="property-context-location">
+                        <i class="fas fa-map-marker-alt"></i>
+                        ${location || 'Location not specified'}
+                    </div>
+                    <div class="property-context-features">
+                        ${property.bedrooms ? `${property.bedrooms} bed${property.bedrooms !== 1 ? 's' : ''}` : ''}
+                        ${property.bedrooms && property.accommodates ? ' • ' : ''}
+                        ${property.accommodates ? `${property.accommodates} guests` : ''}
+                        ${(property.bedrooms || property.accommodates) && rating ? ' • ' : ''}
+                        ${rating ? `⭐ ${rating}` : ''}
+                    </div>
+                    <div class="property-context-price">$${property.price || 0}/night</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Show/hide loading
+function showLoading(show) {
+    const spinner = document.getElementById('loadingSpinner');
+    const grid = document.getElementById('resultsGrid');
+    
+    if (show) {
+        spinner.classList.add('active');
+        grid.style.opacity = '0.5';
+    } else {
+        spinner.classList.remove('active');
+        grid.style.opacity = '1';
+    }
+}
+
+// Show error message
+function showError(message) {
+    // For now, add error message to AI assistant
+    addAIMessage(`❌ ${message}. Please try again or let me know if you need help!`);
+}
+
+// ======================
+// AI ASSISTANT FUNCTIONALITY
+// ======================
+
+// Toggle AI assistant
+function toggleAssistant() {
+    const assistant = document.getElementById('aiAssistant');
+    const toggle = document.getElementById('aiToggle');
+    const notification = toggle.querySelector('.ai-notification');
+    
+    AppState.aiAssistantVisible = !AppState.aiAssistantVisible;
+    
+    if (AppState.aiAssistantVisible) {
+        assistant.classList.add('active');
+        toggle.style.display = 'none';
+        notification.style.display = 'none';
+        // Scroll to bottom when opening
+        setTimeout(scrollToBottom, 300);
+    } else {
+        assistant.classList.remove('active');
+        toggle.style.display = 'flex';
+    }
+}
+
+// Minimize AI assistant
+function minimizeAssistant() {
+    const assistant = document.getElementById('aiAssistant');
+    AppState.aiAssistantMinimized = !AppState.aiAssistantMinimized;
+    
+    if (AppState.aiAssistantMinimized) {
+        assistant.classList.add('minimized');
+    } else {
+        assistant.classList.remove('minimized');
+        // Scroll to bottom when maximizing
+        setTimeout(scrollToBottom, 100);
+    }
+}
+
+// Close AI assistant
+function closeAssistant() {
+    AppState.aiAssistantVisible = false;
+    AppState.aiAssistantMinimized = false;
+    
+    const assistant = document.getElementById('aiAssistant');
+    const toggle = document.getElementById('aiToggle');
+    
+    assistant.classList.remove('active', 'minimized');
+    toggle.style.display = 'flex';
+}
+
+// Send message to AI assistant
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const message = input.value.trim();
+    
+    if (!message) return;
+    
+    // Add user message immediately
+    addUserMessage(message);
+    input.value = '';
+    
+    // Show typing indicator
+    showTypingIndicator();
+    
+    try {
+        // Prepare context including current property
+        const context = {
+            current_search: AppState.currentSearchParams.location || '',
+            filters: AppState.currentFilters,
+            current_property: AppState.currentProperty ? {
+                id: AppState.currentProperty._id,
+                name: AppState.currentProperty.name,
+                price: AppState.currentProperty.price,
+                location: AppState.currentProperty.address,
+                features: {
+                    bedrooms: AppState.currentProperty.bedrooms,
+                    bathrooms: AppState.currentProperty.bathrooms,
+                    accommodates: AppState.currentProperty.accommodates,
+                    property_type: AppState.currentProperty.property_type
+                }
+            } : null,
+            user_preferences: {}
+        };
+        
+        // Send to RAG agent
+        const response = await fetch(`${API_BASE}/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message,
+                sessionId: AppState.chatSessionId,
+                context
+            })
+        });
+        
+        const data = await response.json();
+        
+        // Hide typing indicator
+        hideTypingIndicator();
+        
+        if (data.success) {
+            // Store session ID for future requests
+            AppState.chatSessionId = data.sessionId;
+            
+            // Add AI response
+            addAIMessage(data.message);
+            
+            // Debug: Log the entire response context
+            console.log('Full AI response data:', data);
+            console.log('Response context:', data.context);
+            
+            // If the response contains rental search results, activate search mode
+            if (data.context?.has_rental_results && data.context?.search_metadata?.search_performed) {
+                console.log('AI response contains rental search results:', data.context.search_metadata);
+                activateSearchMode(data.message, message, data.context.search_metadata);
+            } else if (data.context?.search_metadata) {
+                // Even if search_performed is not explicitly true, try to apply filters if metadata exists
+                console.log('Attempting to apply filters from search metadata:', data.context.search_metadata);
+                applyStructuredFilters(data.context.search_metadata);
+            } else {
+                console.log('No search metadata found in AI response, trying to parse user message directly');
+                // Fallback: try to parse the user's message directly for search criteria
+                parseUserMessageForFilters(message);
+            }
+        } else {
+            addAIMessage("I'm sorry, I encountered an error. Please try again.");
+            console.error('Chat API error:', data.error);
+        }
+    } catch (error) {
+        hideTypingIndicator();
+        addAIMessage("I'm having trouble connecting right now. Please try again.");
+        console.error('Chat request failed:', error);
+    }
+}
+
+// Add user message
+function addUserMessage(message) {
+    const messagesContainer = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message user-message';
+    messageDiv.innerHTML = `
+        <div class="message-content">${message}</div>
+        <div class="message-time">${formatTime(new Date())}</div>
+    `;
+    
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+// Add AI message with markdown support
+function addAIMessage(message, includePropertyContext = false) {
+    const messagesContainer = document.getElementById('chatMessages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message ai-message';
+    
+    // Configure marked.js for safe rendering
+    marked.setOptions({
+        breaks: true,
+        gfm: true,
+        sanitize: false,
+        highlight: function(code, lang) {
+            if (hljs && lang && hljs.getLanguage(lang)) {
+                try {
+                    return hljs.highlight(code, { language: lang }).value;
+                } catch (err) {
+                    console.warn('Highlight.js error:', err);
+                }
+            }
+            return code;
+        }
+    });
+    
+    // Render markdown content
+    const renderedMessage = marked.parse(message);
+    
+    let messageContent = `<div class="message-content">${renderedMessage}</div>`;
+    
+    // Add property context if available and requested
+    if (includePropertyContext && AppState.currentProperty) {
+        const propertyContextHtml = createPropertyContextHTML(AppState.currentProperty);
+        messageContent = propertyContextHtml + messageContent;
+    }
+    
+    messageDiv.innerHTML = `
+        ${messageContent}
+        <div class="message-time">${formatTime(new Date())}</div>
+    `;
+    
+    messagesContainer.appendChild(messageDiv);
+    scrollToBottom();
+    
+    // Show notification if assistant is closed
+    if (!AppState.aiAssistantVisible) {
+        const notification = document.querySelector('.ai-notification');
+        notification.style.display = 'flex';
+        notification.textContent = parseInt(notification.textContent) + 1;
+    }
+}
+
+// Show typing indicator
+function showTypingIndicator() {
+    const messagesContainer = document.getElementById('chatMessages');
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'message ai-message typing-indicator';
+    typingDiv.id = 'typingIndicator';
+    typingDiv.innerHTML = `
+        <div class="message-content">
+            <div class="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    `;
+    
+    messagesContainer.appendChild(typingDiv);
+    scrollToBottom();
+}
+
+// Hide typing indicator
+function hideTypingIndicator() {
+    const typingIndicator = document.getElementById('typingIndicator');
+    if (typingIndicator) {
+        typingIndicator.remove();
+    }
+}
+
+// Format time
+function formatTime(date) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Scroll chat to bottom
+function scrollToBottom() {
+    const messagesContainer = document.getElementById('chatMessages');
+    if (messagesContainer) {
+        // Use setTimeout to ensure DOM has updated
+        setTimeout(() => {
+            // Try multiple methods to ensure scrolling works
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            // Alternative method: scroll into view for last message
+            const lastMessage = messagesContainer.lastElementChild;
+            if (lastMessage) {
+                lastMessage.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }
+        }, 50); // Increased timeout for better reliability
+    }
+}
+
+// Handle Enter key in chat input
+document.addEventListener('DOMContentLoaded', function() {
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+        chatInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    }
+});
+
+// ======================
+// DRAGGABLE FUNCTIONALITY
+// ======================
+
+function initializeDraggableAssistant() {
+    const assistant = document.getElementById('aiAssistant');
+    const header = assistant.querySelector('.ai-assistant-header');
+    
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+    
+    header.addEventListener('mousedown', startDragging);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', stopDragging);
+    
+    // Touch events for mobile
+    header.addEventListener('touchstart', startDraggingTouch, { passive: false });
+    document.addEventListener('touchmove', dragTouch, { passive: false });
+    document.addEventListener('touchend', stopDragging);
+    
+    function startDragging(e) {
+        if (e.target.closest('.ai-controls')) return; // Don't drag when clicking controls
+        
+        isDragging = true;
+        assistant.classList.add('dragging');
+        
+        const rect = assistant.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        
+        e.preventDefault();
+    }
+    
+    function startDraggingTouch(e) {
+        if (e.target.closest('.ai-controls')) return;
+        
+        const touch = e.touches[0];
+        isDragging = true;
+        assistant.classList.add('dragging');
+        
+        const rect = assistant.getBoundingClientRect();
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startLeft = rect.left;
+        startTop = rect.top;
+        
+        e.preventDefault();
+    }
+    
+    function drag(e) {
+        if (!isDragging) return;
+        
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        
+        const newLeft = startLeft + deltaX;
+        const newTop = startTop + deltaY;
+        
+        // Keep assistant within viewport bounds
+        const maxLeft = window.innerWidth - assistant.offsetWidth;
+        const maxTop = window.innerHeight - assistant.offsetHeight;
+        
+        const constrainedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        const constrainedTop = Math.max(0, Math.min(newTop, maxTop));
+        
+        assistant.style.left = constrainedLeft + 'px';
+        assistant.style.top = constrainedTop + 'px';
+        assistant.style.right = 'auto';
+        assistant.style.bottom = 'auto';
+        
+        e.preventDefault();
+    }
+    
+    function dragTouch(e) {
+        if (!isDragging) return;
+        
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - startX;
+        const deltaY = touch.clientY - startY;
+        
+        const newLeft = startLeft + deltaX;
+        const newTop = startTop + deltaY;
+        
+        const maxLeft = window.innerWidth - assistant.offsetWidth;
+        const maxTop = window.innerHeight - assistant.offsetHeight;
+        
+        const constrainedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        const constrainedTop = Math.max(0, Math.min(newTop, maxTop));
+        
+        assistant.style.left = constrainedLeft + 'px';
+        assistant.style.top = constrainedTop + 'px';
+        assistant.style.right = 'auto';
+        assistant.style.bottom = 'auto';
+        
+        e.preventDefault();
+    }
+    
+    function stopDragging() {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        assistant.classList.remove('dragging');
+    }
+}
+
+// ======================
+// SEARCH MODE FUNCTIONALITY
+// ======================
+
+// Activate search mode when AI provides rental results
+function activateSearchMode(aiResponse, userQuery, searchMetadata = {}) {
+    AppState.searchMode = true;
+    AppState.searchContext = {
+        userQuery: userQuery,
+        aiResponse: aiResponse,
+        searchMetadata: searchMetadata,
+        timestamp: new Date().toISOString()
+    };
+    
+    // Update UI to show search mode
+    updateUIForSearchMode();
+    
+    // Apply filters from structured metadata
+    applyStructuredFilters(searchMetadata);
+}
+
+// Deactivate search mode
+function deactivateSearchMode() {
+    AppState.searchMode = false;
+    AppState.searchContext = null;
+    
+    // Restore normal UI
+    updateUIForNormalMode();
+}
+
+// Update UI for search mode
+function updateUIForSearchMode() {
+    const body = document.body;
+    const hero = document.querySelector('.hero');
+    const filtersSection = document.querySelector('.filters-section');
+    
+    // Add search mode class to body
+    body.classList.add('search-mode');
+    
+    // Create and show search context bar
+    showSearchContextBar();
+    
+    // Modify hero section
+    if (hero) {
+        hero.classList.add('search-mode');
+    }
+    
+    // Modify filters section
+    if (filtersSection) {
+        filtersSection.classList.add('search-mode');
+    }
+    
+    // Ensure AI assistant is visible during search mode
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+}
+
+// Update UI for normal mode
+function updateUIForNormalMode() {
+    const body = document.body;
+    const hero = document.querySelector('.hero');
+    const filtersSection = document.querySelector('.filters-section');
+    
+    // Remove search mode class
+    body.classList.remove('search-mode');
+    
+    // Hide search context bar
+    hideSearchContextBar();
+    
+    // Restore hero section
+    if (hero) {
+        hero.classList.remove('search-mode');
+    }
+    
+    // Restore filters section
+    if (filtersSection) {
+        filtersSection.classList.remove('search-mode');
+    }
+}
+
+// Show search context bar
+function showSearchContextBar() {
+    // Remove existing bar if present
+    hideSearchContextBar();
+    
+    if (!AppState.searchContext) return;
+    
+    const contextBar = document.createElement('div');
+    contextBar.className = 'search-context-bar';
+    contextBar.innerHTML = `
+        <div class="container">
+            <div class="search-context-content">
+                <div class="search-context-info">
+                    <div class="search-context-icon">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="search-context-text">
+                        <div class="search-context-title">AI Search Active</div>
+                        <div class="search-context-query">"${AppState.searchContext.userQuery}"</div>
+                        ${AppState.searchContext.searchMetadata?.search_type ? `
+                            <div class="search-context-meta">Search: ${AppState.searchContext.searchMetadata.search_type.replace('_', ' ')}</div>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="search-context-actions">
+                    <button class="btn-search-context" onclick="toggleAssistant()">
+                        <i class="fas fa-comments"></i>
+                        Continue Chat
+                    </button>
+                    <button class="btn-search-context secondary" onclick="deactivateSearchMode()">
+                        <i class="fas fa-times"></i>
+                        Exit Search Mode
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Insert after header
+    const header = document.querySelector('.header');
+    if (header && header.nextSibling) {
+        header.parentNode.insertBefore(contextBar, header.nextSibling);
+    } else if (header) {
+        header.parentNode.appendChild(contextBar);
+    }
+}
+
+// Hide search context bar
+function hideSearchContextBar() {
+    const existingBar = document.querySelector('.search-context-bar');
+    if (existingBar) {
+        existingBar.remove();
+    }
+}
+
+// Apply filters from structured metadata
+function applyStructuredFilters(searchMetadata) {
+    if (!searchMetadata || !searchMetadata.search_filters) {
+        return;
+    }
+    
+    const filters = searchMetadata.search_filters;
+    let locationExtracted = false;
+    
+    // Extract location from search filters (preferred) or search query
+    let extractedLocation = null;
+    
+    // First try to get location from the structured filters
+    if (searchMetadata.search_filters && searchMetadata.search_filters.location) {
+        extractedLocation = searchMetadata.search_filters.location;
+        console.log('Location found in search filters:', extractedLocation);
+    }
+    // Fallback: try to extract from query text
+    else if (searchMetadata.search_query) {
+        extractedLocation = extractLocationFromQuery(searchMetadata.search_query);
+        console.log('Location extracted from query text:', extractedLocation);
+    }
+    
+    if (extractedLocation) {
+        AppState.currentSearchParams.location = extractedLocation;
+        const locationInput = document.getElementById('locationInput');
+        if (locationInput) {
+            locationInput.value = extractedLocation;
+        }
+        locationExtracted = true;
+        console.log('Final location set:', extractedLocation);
+    }
+    
+    // Apply the filters directly from the structured metadata
+    if (Object.keys(filters).length > 0 || locationExtracted) {
+        console.log('Applying structured filters from AI response:', filters);
+        console.log('Location extracted:', locationExtracted, AppState.currentSearchParams.location);
+        
+        AppState.currentFilters = { ...AppState.currentFilters, ...filters };
+        updateFilterUI(filters);
+        
+        // Automatically trigger search with the applied filters
+        setTimeout(() => {
+            console.log('Auto-triggering search with AI-applied filters');
+            const rentalIds = searchMetadata.rental_ids || null;
+            performAITriggeredSearch(rentalIds);
+        }, 500); // Small delay to let UI updates complete
+    }
+}
+
+// Perform search triggered by AI filter application
+async function performAITriggeredSearch(rentalIds = null) {
+    console.log('Performing AI-triggered search with current state:', {
+        searchParams: AppState.currentSearchParams,
+        filters: AppState.currentFilters,
+        rentalIds: rentalIds
+    });
+    
+    // Build search parameters - combine search params and filters
+    const params = new URLSearchParams();
+    
+    // If we have specific rental IDs from AI search, use them
+    if (rentalIds && rentalIds.length > 0) {
+        // Use the specific rental IDs instead of filters
+        params.append('ids', rentalIds.join(','));
+        console.log('Using specific rental IDs from AI search:', rentalIds);
+    } else {
+        // Add search parameters (location, guests, etc.)
+        if (AppState.currentSearchParams.location) {
+            params.append('location', AppState.currentSearchParams.location);
+        }
+        
+        // Add current filters
+        Object.keys(AppState.currentFilters).forEach(key => {
+            if (AppState.currentFilters[key]) {
+                params.append(key, AppState.currentFilters[key]);
+            }
+        });
+        
+        // Add guests parameter only if not already set by filters
+        if (AppState.currentSearchParams.guests && 
+            AppState.currentSearchParams.guests !== '1' && 
+            !AppState.currentFilters.min_accommodates) {
+            params.append('min_accommodates', AppState.currentSearchParams.guests);
+        }
+    }
+    
+    params.append('limit', '12');
+    params.append('sortBy', 'price');
+    params.append('sortOrder', '1');
+    
+    showLoading(true);
+    
+    try {
+        // Use search endpoint for AI-triggered searches, rentals endpoint for ID-specific queries
+        const endpoint = rentalIds ? 'rentals' : 'search';
+        const response = await fetch(`${API_BASE}/${endpoint}?${params.toString()}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            AppState.rentals = data.data;
+            renderRentals(data.data);
+            renderPagination(data.pagination);
+            
+            // Add success message to AI assistant
+            const location = AppState.currentSearchParams.location || '';
+            const filterCount = Object.keys(AppState.currentFilters).filter(key => AppState.currentFilters[key]).length;
+            
+            let message = `✅ Found ${data.pagination.total} rentals`;
+            if (location) message += ` in ${location}`;
+            if (filterCount > 0) message += ` with ${filterCount} filter${filterCount !== 1 ? 's' : ''} applied`;
+            message += '! The results have been updated automatically.';
+            
+            addAIMessage(message);
+        } else {
+            showError('AI search failed - please try adjusting your criteria');
+        }
+    } catch (error) {
+        console.error('Error in AI-triggered search:', error);
+        showError('AI search failed - please try again');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Parse AI response and try to apply filters automatically (fallback method)
+function parseAndApplyAIFilters(aiResponse) {
+    // This is a basic implementation - could be enhanced with more sophisticated parsing
+    const lowerResponse = aiResponse.toLowerCase();
+    const filters = {};
+    
+    // Try to extract property type
+    const propertyTypes = ['apartment', 'house', 'condo', 'loft', 'villa'];
+    for (const type of propertyTypes) {
+        if (lowerResponse.includes(type)) {
+            filters.property_type = type.charAt(0).toUpperCase() + type.slice(1);
+            break;
+        }
+    }
+    
+    // Try to extract price range
+    const priceMatch = lowerResponse.match(/\$(\d+)[\s\-to]*\$?(\d+)?/);
+    if (priceMatch) {
+        filters.min_price = priceMatch[1];
+        if (priceMatch[2]) {
+            filters.max_price = priceMatch[2];
+        }
+    }
+    
+    // Try to extract bedroom count
+    const bedroomMatch = lowerResponse.match(/(\d+)[\s+]?bedroom/);
+    if (bedroomMatch) {
+        filters.min_bedrooms = bedroomMatch[1];
+    }
+    
+    // Apply filters if any were found
+    if (Object.keys(filters).length > 0) {
+        AppState.currentFilters = { ...AppState.currentFilters, ...filters };
+        updateFilterUI(filters);
+    }
+}
+
+// Update filter UI with extracted filters
+function updateFilterUI(filters) {
+    console.log('Updating UI with filters:', filters);
+    
+    // Update property type
+    if (filters.property_type) {
+        const propertySelect = document.getElementById('propertyType');
+        if (propertySelect) {
+            // Try to match the property type, case insensitive
+            const option = [...propertySelect.options].find(opt => 
+                opt.value.toLowerCase() === filters.property_type.toLowerCase()
+            );
+            if (option) {
+                propertySelect.value = option.value;
+            } else {
+                propertySelect.value = filters.property_type;
+            }
+        }
+    }
+    
+    // Update price range
+    if (filters.min_price) {
+        const minPriceInput = document.getElementById('minPrice');
+        if (minPriceInput) {
+            minPriceInput.value = filters.min_price;
+        }
+    }
+    
+    if (filters.max_price) {
+        const maxPriceInput = document.getElementById('maxPrice');
+        if (maxPriceInput) {
+            maxPriceInput.value = filters.max_price;
+        }
+    }
+    
+    // Update bedrooms
+    if (filters.min_bedrooms) {
+        const bedroomsSelect = document.getElementById('bedrooms');
+        if (bedroomsSelect) {
+            bedroomsSelect.value = filters.min_bedrooms;
+        }
+    }
+    
+    // Update guest count if available
+    if (filters.min_accommodates) {
+        const guestSelect = document.getElementById('guestCount');
+        if (guestSelect) {
+            // Try to match or find the closest value
+            let bestMatch = '1';
+            for (let option of guestSelect.options) {
+                const optionValue = parseInt(option.value);
+                if (optionValue >= filters.min_accommodates) {
+                    bestMatch = option.value;
+                    break;
+                }
+            }
+            guestSelect.value = bestMatch;
+            
+            // Also update the AppState search params
+            AppState.currentSearchParams.guests = bestMatch;
+        }
+    }
+    
+    // Update superhost tag
+    if (filters.superhost_only === true || filters.superhost_only === 'true') {
+        const superhostTag = document.querySelector('.tag[data-filter="superhost"]');
+        if (superhostTag) {
+            superhostTag.classList.add('active');
+        }
+    }
+    
+    // Update instant book tag if available
+    if (filters.instant_bookable === true || filters.instant_bookable === 'true') {
+        const instantTag = document.querySelector('.tag[data-filter="instant"]');
+        if (instantTag) {
+            instantTag.classList.add('active');
+        }
+    }
+    
+    // Trigger a visual update to show the filters have been applied
+    highlightUpdatedFields(filters);
+}
+
+// Highlight updated form fields to show they've been changed by AI
+function highlightUpdatedFields(filters) {
+    const fieldsToHighlight = [];
+    
+    // Collect all updated fields
+    if (filters.property_type) {
+        fieldsToHighlight.push(document.getElementById('propertyType'));
+    }
+    if (filters.min_price) {
+        fieldsToHighlight.push(document.getElementById('minPrice'));
+    }
+    if (filters.max_price) {
+        fieldsToHighlight.push(document.getElementById('maxPrice'));
+    }
+    if (filters.min_bedrooms) {
+        fieldsToHighlight.push(document.getElementById('bedrooms'));
+    }
+    if (filters.min_accommodates) {
+        fieldsToHighlight.push(document.getElementById('guestCount'));
+    }
+    if (filters.superhost_only) {
+        fieldsToHighlight.push(document.querySelector('.tag[data-filter="superhost"]'));
+    }
+    
+    // Location field if it was updated
+    if (AppState.currentSearchParams.location) {
+        fieldsToHighlight.push(document.getElementById('locationInput'));
+    }
+    
+    // Apply highlight effect
+    fieldsToHighlight.forEach(field => {
+        if (field) {
+            field.classList.add('ai-updated');
+            // Remove highlight after animation
+            setTimeout(() => {
+                field.classList.remove('ai-updated');
+            }, 2000);
+        }
+    });
+    
+    // Show a notification that filters have been applied
+    showFilterUpdateNotification(Object.keys(filters).length);
+}
+
+// Show notification when filters are updated by AI
+function showFilterUpdateNotification(filterCount) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = 'ai-filter-notification';
+    notification.innerHTML = `
+        <div class="notification-content">
+            <i class="fas fa-robot"></i>
+            <span>AI updated ${filterCount} filter${filterCount !== 1 ? 's' : ''} based on your search</span>
+        </div>
+    `;
+    
+    // Add to page
+    document.body.appendChild(notification);
+    
+    // Show animation
+    setTimeout(() => {
+        notification.classList.add('show');
+    }, 100);
+    
+    // Remove after delay
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, 3000);
+}
+
+// Extract location from search query - simplified to work with AI agent intelligence
+function extractLocationFromQuery(query) {
+    if (!query) return null;
+    
+    const lowerQuery = query.toLowerCase();
+    
+    // Database markets mapped to common user terms (AI agent handles the mapping)
+    const locationMappings = {
+        'manhattan': 'New York',
+        'nyc': 'New York', 
+        'new york city': 'New York',
+        'new york': 'New York',
+        'rio': 'Rio De Janeiro',
+        'brazil': 'Rio De Janeiro',
+        'hawaii': 'Oahu',
+        'hong kong': 'Hong Kong',
+        'barcelona': 'Barcelona',
+        'montreal': 'Montreal',
+        'istanbul': 'Istanbul',
+        'sydney': 'Sydney',
+        'porto': 'Porto',
+        'oahu': 'Oahu',
+        'maui': 'Maui',
+        'big island': 'The Big Island',
+        'kauai': 'Kauai'
+    };
+    
+    // Simple extraction patterns
+    const patterns = [
+        /(?:in|at|near|around)\s+(.+?)(?:\s|$|,|\.|!|\?)/,
+        new RegExp(`\\b(${Object.keys(locationMappings).join('|')})\\b`, 'i')
+    ];
+    
+    for (const pattern of patterns) {
+        const match = lowerQuery.match(pattern);
+        if (match) {
+            const location = match[1] ? match[1].trim() : match[0].trim();
+            // Use mapping if available, otherwise use as-is (AI agent will handle)
+            return locationMappings[location.toLowerCase()] || location;
+        }
+    }
+    
+    return null;
+}
+
+// ======================
+// UTILITY FUNCTIONS
+// ======================
+
+// Debounce function for search
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Format price
+function formatPrice(price) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0
+    }).format(price);
+}
+
+// ======================
+// AUTHENTICATION FUNCTIONALITY
+// ======================
+
+// Initialize authentication on page load
+document.addEventListener('DOMContentLoaded', function() {
+    initializeAuth();
+    setupAuthEventListeners();
+});
+
+// Initialize authentication state
+function initializeAuth() {
+    // Check for stored token
+    const token = localStorage.getItem('authToken');
+    if (token) {
+        AppState.authToken = token;
+        validateToken();
+    }
+}
+
+// Setup event listeners for auth buttons
+function setupAuthEventListeners() {
+    // Sign In button
+    const signInBtn = document.querySelector('.btn-secondary');
+    if (signInBtn && signInBtn.textContent.trim() === 'Sign In') {
+        signInBtn.addEventListener('click', showSignInModal);
+    }
+    
+    // Sign Up button
+    const signUpBtn = document.querySelector('.btn-primary');
+    if (signUpBtn && signInBtn && signUpBtn.textContent.trim() === 'Sign Up') {
+        signUpBtn.addEventListener('click', showSignUpModal);
+    }
+}
+
+// Show sign in modal
+function showSignInModal() {
+    const modal = createAuthModal('signin');
+    document.body.appendChild(modal);
+    
+    // Focus on username field
+    setTimeout(() => {
+        const usernameInput = modal.querySelector('#signinUsername');
+        if (usernameInput) usernameInput.focus();
+    }, 100);
+}
+
+// Show sign up modal
+function showSignUpModal() {
+    const modal = createAuthModal('signup');
+    document.body.appendChild(modal);
+    
+    // Focus on username field
+    setTimeout(() => {
+        const usernameInput = modal.querySelector('#signupUsername');
+        if (usernameInput) usernameInput.focus();
+    }, 100);
+}
+
+// Create authentication modal
+function createAuthModal(type) {
+    const isSignIn = type === 'signin';
+    const modal = document.createElement('div');
+    modal.className = 'auth-modal-overlay';
+    modal.innerHTML = `
+        <div class="auth-modal">
+            <div class="auth-modal-header">
+                <h2>${isSignIn ? 'Sign In' : 'Sign Up'}</h2>
+                <button class="auth-modal-close" onclick="closeAuthModal()">&times;</button>
+            </div>
+            <div class="auth-modal-body">
+                <form id="${type}Form" onsubmit="handleAuth${isSignIn ? 'SignIn' : 'SignUp'}(event)">
+                    <div class="form-group">
+                        <label for="${type}Username">Username</label>
+                        <input type="text" id="${type}Username" name="username" required 
+                               minlength="3" placeholder="Enter your username">
+                        <small class="form-help">Minimum 3 characters</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="${type}Password">Password</label>
+                        <input type="password" id="${type}Password" name="password" required 
+                               minlength="6" placeholder="Enter your password">
+                        <small class="form-help">Minimum 6 characters</small>
+                    </div>
+                    ${!isSignIn ? `
+                        <div class="form-group">
+                            <label for="signupPasswordConfirm">Confirm Password</label>
+                            <input type="password" id="signupPasswordConfirm" name="passwordConfirm" required 
+                                   minlength="6" placeholder="Confirm your password">
+                        </div>
+                    ` : ''}
+                    <div class="auth-modal-actions">
+                        <button type="button" class="btn-secondary" onclick="closeAuthModal()">Cancel</button>
+                        <button type="submit" class="btn-primary" id="${type}SubmitBtn">
+                            ${isSignIn ? 'Sign In' : 'Sign Up'}
+                        </button>
+                    </div>
+                </form>
+                <div class="auth-modal-footer">
+                    <p>
+                        ${isSignIn ? "Don't have an account?" : "Already have an account?"}
+                        <a href="#" onclick="switchAuthModal('${isSignIn ? 'signup' : 'signin'}')">
+                            ${isSignIn ? 'Sign Up' : 'Sign In'}
+                        </a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Add event listeners for Enter key
+    const form = modal.querySelector('form');
+    form.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            form.dispatchEvent(new Event('submit'));
+        }
+    });
+    
+    return modal;
+}
+
+// Close authentication modal
+function closeAuthModal() {
+    const modal = document.querySelector('.auth-modal-overlay');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Switch between sign in and sign up modals
+function switchAuthModal(type) {
+    closeAuthModal();
+    if (type === 'signin') {
+        showSignInModal();
+    } else {
+        showSignUpModal();
+    }
+}
+
+// Handle sign in form submission
+async function handleAuthSignIn(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const submitBtn = form.querySelector('#signinSubmitBtn');
+    const username = form.username.value.trim();
+    const password = form.password.value;
+    
+    if (!username || !password) {
+        showAuthError('Please fill in all fields');
+        return;
+    }
+    
+    // Show loading state
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Signing In...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Store token and user info
+            AppState.authToken = data.token;
+            AppState.user = data.user;
+            localStorage.setItem('authToken', data.token);
+            
+            // Update UI
+            updateUIForAuthenticatedUser();
+            closeAuthModal();
+            
+            // Show success message in AI assistant
+            addAIMessage(`Welcome back, ${data.user.username}! 🎉 You're now signed in and I can remember our conversations and your preferences.`);
+            
+            // Show AI assistant if not visible
+            if (!AppState.aiAssistantVisible) {
+                toggleAssistant();
+            }
+        } else {
+            showAuthError(data.error || 'Sign in failed');
+        }
+    } catch (error) {
+        console.error('Sign in error:', error);
+        showAuthError('Connection error. Please try again.');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign In';
+    }
+}
+
+// Handle sign up form submission
+async function handleAuthSignUp(event) {
+    event.preventDefault();
+    
+    const form = event.target;
+    const submitBtn = form.querySelector('#signupSubmitBtn');
+    const username = form.username.value.trim();
+    const password = form.password.value;
+    const passwordConfirm = form.passwordConfirm.value;
+    
+    if (!username || !password || !passwordConfirm) {
+        showAuthError('Please fill in all fields');
+        return;
+    }
+    
+    if (password !== passwordConfirm) {
+        showAuthError('Passwords do not match');
+        return;
+    }
+    
+    if (username.length < 3) {
+        showAuthError('Username must be at least 3 characters');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showAuthError('Password must be at least 6 characters');
+        return;
+    }
+    
+    // Show loading state
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating Account...';
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/register`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Store token and user info
+            AppState.authToken = data.token;
+            AppState.user = data.user;
+            localStorage.setItem('authToken', data.token);
+            
+            // Update UI
+            updateUIForAuthenticatedUser();
+            closeAuthModal();
+            
+            // Show welcome message in AI assistant
+            addAIMessage(`Welcome to RentAI, ${data.user.username}! 🎉 Your account has been created successfully. I can now remember our conversations and learn your preferences to provide better recommendations.`);
+            
+            // Show AI assistant if not visible
+            if (!AppState.aiAssistantVisible) {
+                toggleAssistant();
+            }
+        } else {
+            showAuthError(data.error || 'Sign up failed');
+        }
+    } catch (error) {
+        console.error('Sign up error:', error);
+        showAuthError('Connection error. Please try again.');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign Up';
+    }
+}
+
+// Show authentication error
+function showAuthError(message) {
+    // Remove existing error
+    const existingError = document.querySelector('.auth-error');
+    if (existingError) {
+        existingError.remove();
+    }
+    
+    // Create error element
+    const error = document.createElement('div');
+    error.className = 'auth-error';
+    error.innerHTML = `
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>${message}</span>
+    `;
+    
+    // Insert into modal
+    const modalBody = document.querySelector('.auth-modal-body');
+    if (modalBody) {
+        modalBody.insertBefore(error, modalBody.firstChild);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (error.parentNode) {
+                error.remove();
+            }
+        }, 5000);
+    }
+}
+
+// Update UI for authenticated user
+function updateUIForAuthenticatedUser() {
+    const navActions = document.querySelector('.nav-actions');
+    if (navActions && AppState.user) {
+        navActions.innerHTML = `
+            <div class="user-menu">
+                <button class="user-menu-toggle" onclick="toggleUserMenu()">
+                    <i class="fas fa-user"></i>
+                    <span>${AppState.user.username}</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="user-menu-dropdown" id="userMenuDropdown">
+                    <a href="#" onclick="showProfile()">
+                        <i class="fas fa-user"></i>
+                        Profile
+                    </a>
+                    <a href="#" onclick="showConversationHistory()">
+                        <i class="fas fa-comments"></i>
+                        Chat History
+                    </a>
+                    <div class="user-menu-divider"></div>
+                    <a href="#" onclick="signOut()">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Sign Out
+                    </a>
+                </div>
+            </div>
+        `;
+    }
+}
+
+// Toggle user menu
+function toggleUserMenu() {
+    const dropdown = document.getElementById('userMenuDropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('active');
+    }
+    
+    // Close menu when clicking outside
+    document.addEventListener('click', function closeMenu(e) {
+        if (!e.target.closest('.user-menu')) {
+            dropdown.classList.remove('active');
+            document.removeEventListener('click', closeMenu);
+        }
+    });
+}
+
+// Show user profile
+function showProfile() {
+    const dropdown = document.getElementById('userMenuDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+    
+    // For now, show profile info in AI assistant
+    if (AppState.user) {
+        const joinDate = new Date(AppState.user.created_at).toLocaleDateString();
+        addAIMessage(`**Your Profile:**\n\n👤 **Username:** ${AppState.user.username}\n📅 **Member since:** ${joinDate}\n💬 **Total conversations:** ${AppState.user.memory_stats?.total_conversations || 0}\n🔍 **Total searches:** ${AppState.user.memory_stats?.total_searches || 0}`);
+        
+        if (!AppState.aiAssistantVisible) {
+            toggleAssistant();
+        }
+    }
+}
+
+// Show conversation history
+function showConversationHistory() {
+    const dropdown = document.getElementById('userMenuDropdown');
+    if (dropdown) dropdown.classList.remove('active');
+    
+    // For now, show message in AI assistant
+    addAIMessage("Your conversation history is automatically saved! All our previous chats are remembered, so I can provide better context and personalized recommendations based on our past interactions.");
+    
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+}
+
+// Sign out user
+async function signOut() {
+    try {
+        // Call logout endpoint
+        if (AppState.authToken) {
+            await fetch(`${API_BASE}/auth/logout`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${AppState.authToken}`
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Logout error:', error);
+    } finally {
+        // Clear local state
+        AppState.authToken = null;
+        AppState.user = null;
+        AppState.chatSessionId = null;
+        localStorage.removeItem('authToken');
+        
+        // Reset UI
+        updateUIForAnonymousUser();
+        
+        // Show message in AI assistant
+        addAIMessage("You've been signed out successfully. You can still chat with me, but I won't remember our conversations after you leave the page.");
+    }
+}
+
+// Update UI for anonymous user
+function updateUIForAnonymousUser() {
+    const navActions = document.querySelector('.nav-actions');
+    if (navActions) {
+        navActions.innerHTML = `
+            <button class="btn-secondary" onclick="showSignInModal()">Sign In</button>
+            <button class="btn-primary" onclick="showSignUpModal()">Sign Up</button>
+        `;
+    }
+}
+
+// Validate stored token
+async function validateToken() {
+    if (!AppState.authToken) return;
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/validate`, {
+            headers: {
+                'Authorization': `Bearer ${AppState.authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.user) {
+            AppState.user = data.user;
+            updateUIForAuthenticatedUser();
+        } else {
+            // Token is invalid, clear it
+            AppState.authToken = null;
+            AppState.user = null;
+            localStorage.removeItem('authToken');
+        }
+    } catch (error) {
+        console.error('Token validation error:', error);
+        // Clear invalid token
+        AppState.authToken = null;
+        AppState.user = null;
+        localStorage.removeItem('authToken');
+    }
+}
+
+// Update chat requests to include auth token
+const originalSendMessage = sendMessage;
+sendMessage = async function() {
+    const input = document.getElementById('chatInput');
+    const message = input.value.trim();
+    
+    if (!message) return;
+    
+    // Add user message immediately
+    addUserMessage(message);
+    input.value = '';
+    
+    // Show typing indicator
+    showTypingIndicator();
+    
+    try {
+        // Prepare context including current property
+        const context = {
+            current_search: AppState.currentSearchParams.location || '',
+            filters: AppState.currentFilters,
+            current_property: AppState.currentProperty ? {
+                id: AppState.currentProperty._id,
+                name: AppState.currentProperty.name,
+                price: AppState.currentProperty.price,
+                location: AppState.currentProperty.address,
+                features: {
+                    bedrooms: AppState.currentProperty.bedrooms,
+                    bathrooms: AppState.currentProperty.bathrooms,
+                    accommodates: AppState.currentProperty.accommodates,
+                    property_type: AppState.currentProperty.property_type
+                }
+            } : null,
+            user_preferences: {}
+        };
+        
+        // Prepare headers
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        
+        // Add auth token if available
+        if (AppState.authToken) {
+            headers['Authorization'] = `Bearer ${AppState.authToken}`;
+        }
+        
+        // Send to RAG agent
+        const response = await fetch(`${API_BASE}/chat`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                message,
+                sessionId: AppState.chatSessionId,
+                context
+            })
+        });
+        
+        const data = await response.json();
+        
+        // Hide typing indicator
+        hideTypingIndicator();
+        
+        if (data.success) {
+            // Store session ID for future requests
+            AppState.chatSessionId = data.sessionId;
+            
+            // Add AI response
+            addAIMessage(data.message);
+            
+            // Debug: Log the entire response context
+            console.log('Full AI response data:', data);
+            console.log('Response context:', data.context);
+            
+            // If the response contains rental search results, activate search mode
+            if (data.context?.has_rental_results && data.context?.search_metadata?.search_performed) {
+                console.log('AI response contains rental search results:', data.context.search_metadata);
+                activateSearchMode(data.message, message, data.context.search_metadata);
+            } else if (data.context?.search_metadata) {
+                // Even if search_performed is not explicitly true, try to apply filters if metadata exists
+                console.log('Attempting to apply filters from search metadata:', data.context.search_metadata);
+                applyStructuredFilters(data.context.search_metadata);
+            } else {
+                console.log('No search metadata found in AI response, trying to parse user message directly');
+                // Fallback: try to parse the user's message directly for search criteria
+                parseUserMessageForFilters(message);
+            }
+        } else {
+            addAIMessage("I'm sorry, I encountered an error. Please try again.");
+            console.error('Chat API error:', data.error);
+        }
+    } catch (error) {
+        hideTypingIndicator();
+        addAIMessage("I'm having trouble connecting right now. Please try again.");
+        console.error('Chat request failed:', error);
+    }
+};
+
+// ======================
+// NAVIGATION FUNCTIONALITY  
+// ======================
+
+// Setup navigation event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    setupNavigationEventListeners();
+});
+
+// Setup navigation event listeners
+function setupNavigationEventListeners() {
+    const navLinks = document.querySelectorAll('.nav-link');
+    navLinks.forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            const linkText = this.textContent.trim();
+            
+            // Update active nav link
+            navLinks.forEach(l => l.classList.remove('active'));
+            this.classList.add('active');
+            
+            // Show appropriate section
+            if (linkText === 'Explore') {
+                showExploreTab();
+            } else if (linkText === 'Recommendations') {
+                showRecommendationsTab();
+            } else if (linkText === 'Saved') {
+                showSavedTab();
+            } else if (linkText === 'Help') {
+                showHelpTab();
+            }
+        });
+    });
+}
+
+// Show explore tab
+function showExploreTab() {
+    // Hide saved rentals section
+    const savedSection = document.getElementById('savedRentalsSection');
+    if (savedSection) {
+        savedSection.style.display = 'none';
+    }
+    // Hide recommendations section
+    const recSection = document.getElementById('recommendationsSection');
+    if (recSection) {
+        recSection.style.display = 'none';
+    }
+    
+    // Show main sections
+    showMainSections();
+    
+    // Update active nav
+    updateActiveNavLink('Explore');
+}
+
+// Show saved rentals tab
+function showSavedTab() {
+    // Hide main sections
+    hideMainSections();
+    
+    // Hide recommendations section
+    const recSection = document.getElementById('recommendationsSection');
+    if (recSection) {
+        recSection.style.display = 'none';
+    }
+
+    // Show saved rentals section
+    const savedSection = document.getElementById('savedRentalsSection');
+    if (savedSection) {
+        savedSection.style.display = 'block';
+        loadSavedRentals();
+    }
+    
+    // Update active nav
+    updateActiveNavLink('Saved');
+}
+
+// Show help tab
+function showHelpTab() {
+    // For now, just show help message in AI assistant
+    addAIMessage(`**RentAI Help** 🏠\n\n**Getting Started:**\n• Use the search bar to find rentals by location\n• Chat with me using natural language: "Find me a 2-bedroom apartment in New York under $200/night"\n• Apply filters to narrow down your search\n• Save properties you like by clicking the heart icon\n\n**AI Assistant Features:**\n• I can search for rentals based on your preferences\n• Ask me about specific properties, neighborhoods, or amenities\n• I'll remember your conversations if you're signed in\n• I can access and help you compare your saved rentals\n\n**Authentication:**\n• Sign up to save your preferences and conversation history\n• Your saved rentals are stored in your account\n• I provide better recommendations when you're signed in\n\nFeel free to ask me anything about rentals!`);
+    
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+}
+
+// Show main sections (hero, filters, results)
+function showMainSections() {
+    const sections = ['.hero', '.filters-section', '.results-section'];
+    sections.forEach(selector => {
+        const section = document.querySelector(selector);
+        if (section) {
+            section.style.display = 'block';
+        }
+    });
+}
+
+// Hide main sections
+function hideMainSections() {
+    const sections = ['.hero', '.filters-section', '.results-section'];
+    sections.forEach(selector => {
+        const section = document.querySelector(selector);
+        if (section) {
+            section.style.display = 'none';
+        }
+    });
+}
+
+// ======================
+// RECOMMENDATIONS (ALS MODEL)
+// ======================
+
+// Show recommendations tab
+function showRecommendationsTab() {
+    hideMainSections();
+    
+    const savedSection = document.getElementById('savedRentalsSection');
+    if (savedSection) savedSection.style.display = 'none';
+    
+    const recSection = document.getElementById('recommendationsSection');
+    if (recSection) {
+        recSection.style.display = 'block';
+        // Show empty state if no results loaded yet
+        const grid = document.getElementById('recResultsGrid');
+        const emptyState = document.getElementById('recEmptyState');
+        if (grid && grid.children.length === 0 && emptyState) {
+            emptyState.style.display = 'block';
+        }
+    }
+    
+    updateActiveNavLink('Recommendations');
+}
+
+// Load recommendations for a user
+async function loadRecommendations() {
+    const input = document.getElementById('recUserIdInput');
+    const userId = input?.value?.trim();
+    if (!userId) {
+        alert('Please enter a user ID');
+        return;
+    }
+    
+    const loading = document.getElementById('recLoading');
+    const grid = document.getElementById('recResultsGrid');
+    const emptyState = document.getElementById('recEmptyState');
+    
+    if (loading) loading.style.display = 'block';
+    if (grid) grid.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'none';
+    
+    try {
+        const res = await fetch(`/recommendations/${encodeURIComponent(userId)}`);
+        const data = await res.json();
+        
+        if (loading) loading.style.display = 'none';
+        
+        if (!data.success || !data.data || data.data.length === 0) {
+            if (grid) grid.innerHTML = `
+                <div class="no-results">
+                    <h3>No recommendations found</h3>
+                    <p>We don't have recommendations for this user ID yet.</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Show source badge
+        const header = document.querySelector('.recommendations-header .rec-subtitle');
+        if (header) {
+            const sourceLabel = data.source === 'personalized' ? 'Personalized for you' : 'Popular picks';
+            header.textContent = `${sourceLabel} — ${data.model} collaborative filtering (no AI involved)`;
+        }
+        
+        // Render recommendation cards (reuse rental card markup)
+        if (grid) {
+            grid.innerHTML = data.data.map((rental, i) => `
+                <div class="rental-card" onclick="viewRental('${rental._id}')">
+                    <div class="rental-image">
+                        <img src="${rental.images?.picture_url || '/place_holder.png?v=1'}" 
+                             alt="${rental.name}" 
+                             onerror="this.src='/place_holder.png?v=1'" />
+                        <div class="rental-badge rec-rank">#${i + 1} Pick</div>
+                    </div>
+                    <div class="rental-content">
+                        <div class="rental-header">
+                            <div>
+                                <div class="rental-title">${rental.name || 'Rental Property'}</div>
+                                <div class="rental-location">
+                                    <i class="fas fa-map-marker-alt"></i>
+                                    ${rental.address?.neighbourhood || rental.address?.market || rental.address?.country || 'Location not specified'}
+                                </div>
+                            </div>
+                            ${rental.review_scores?.review_scores_rating ? `
+                                <div class="rental-rating">
+                                    <i class="fas fa-star"></i>
+                                    ${(rental.review_scores.review_scores_rating / 20).toFixed(1)}
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="rental-features">
+                            ${rental.bedrooms ? `<span><i class="fas fa-bed"></i> ${rental.bedrooms} bed${rental.bedrooms !== 1 ? 's' : ''}</span>` : ''}
+                            ${rental.bathrooms ? `<span><i class="fas fa-bath"></i> ${rental.bathrooms} bath${rental.bathrooms !== 1 ? 's' : ''}</span>` : ''}
+                            ${rental.accommodates ? `<span><i class="fas fa-users"></i> ${rental.accommodates} guests</span>` : ''}
+                        </div>
+                        <div class="rental-price">
+                            <div>
+                                <span class="price">$${rental.price || 0}</span>
+                                <span class="price-period">/night</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+    } catch (err) {
+        if (loading) loading.style.display = 'none';
+        if (grid) grid.innerHTML = `
+            <div class="no-results">
+                <h3>Error loading recommendations</h3>
+                <p>${err.message}</p>
+            </div>
+        `;
+    }
+}
+
+// Update active navigation link
+function updateActiveNavLink(activeText) {
+    const navLinks = document.querySelectorAll('.nav-link');
+    navLinks.forEach(link => {
+        const isActive = link.textContent.trim() === activeText;
+        link.classList.toggle('active', isActive);
+    });
+}
+
+// ======================
+// SAVED RENTALS FUNCTIONALITY
+// ======================
+
+// Load saved rentals
+async function loadSavedRentals() {
+    const authRequired = document.getElementById('savedAuthRequired');
+    const loadingSpinner = document.getElementById('savedLoadingSpinner');
+    const emptyState = document.getElementById('emptySavedState');
+    const savedGrid = document.getElementById('savedRentalsGrid');
+    
+    // Hide all states initially
+    [authRequired, loadingSpinner, emptyState, savedGrid].forEach(el => {
+        if (el) el.style.display = 'none';
+    });
+    
+    // Check if user is authenticated
+    if (!AppState.authToken || !AppState.user) {
+        if (authRequired) authRequired.style.display = 'block';
+        return;
+    }
+    
+    // Show loading
+    if (loadingSpinner) loadingSpinner.style.display = 'block';
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/saved-rentals?include_details=true`, {
+            headers: {
+                'Authorization': `Bearer ${AppState.authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            if (data.saved_rentals && data.saved_rentals.length > 0) {
+                renderSavedRentals(data.saved_rentals);
+                if (savedGrid) savedGrid.style.display = 'grid';
+            } else {
+                if (emptyState) emptyState.style.display = 'block';
+            }
+        } else {
+            throw new Error(data.error || 'Failed to load saved rentals');
+        }
+    } catch (error) {
+        console.error('Error loading saved rentals:', error);
+        if (emptyState) {
+            emptyState.style.display = 'block';
+            emptyState.querySelector('h3').textContent = 'Error loading saved rentals';
+            emptyState.querySelector('p').textContent = 'Please try again or contact support if the problem persists.';
+        }
+    } finally {
+        if (loadingSpinner) loadingSpinner.style.display = 'none';
+    }
+}
+
+// Render saved rentals
+function renderSavedRentals(savedRentals) {
+    const grid = document.getElementById('savedRentalsGrid');
+    if (!grid) return;
+    
+    grid.innerHTML = savedRentals.map(saved => {
+        const rental = saved.full_rental_data || saved.rental_data;
+        const savedDate = new Date(saved.saved_at).toLocaleDateString();
+        
+        // Handle missing rental data gracefully
+        const name = rental?.name || 'Property Name Unavailable';
+        const price = rental?.price ? `$${rental.price}` : 'Price unavailable';
+        const location = rental?.location || 
+                        (rental?.address ? `${rental.address.neighbourhood || rental.address.market || ''}, ${rental.address.country || ''}`.replace(/^, /, '') : '') ||
+                        'Location unavailable';
+        const bedrooms = rental?.bedrooms || 0;
+        const bathrooms = rental?.bathrooms || 0;
+        const accommodates = rental?.accommodates || 0;
+        const image = rental?.image || rental?.images?.thumbnail_url || rental?.images?.picture_url || '';
+        
+        return `
+            <div class="saved-rental-card" data-rental-id="${saved.rental_id}">
+                <div class="saved-rental-image">
+                    ${image ? 
+                        `<img src="${image}" alt="${name}" style="width: 100%; height: 100%; object-fit: cover;" />` : 
+                        '<div class="placeholder-image">No Image</div>'}
+                    <div class="saved-date-badge">Saved ${savedDate}</div>
+                    <button class="unsave-btn" onclick="unsaveRental('${saved.rental_id}')" title="Remove from saved">
+                        <i class="fas fa-heart"></i>
+                    </button>
+                </div>
+                <div class="saved-rental-content">
+                    <h3 class="saved-rental-name">${name}</h3>
+                    <div class="saved-rental-location">
+                        <i class="fas fa-map-marker-alt"></i>
+                        ${location}
+                    </div>
+                    <div class="saved-rental-features">
+                        ${bedrooms > 0 ? `<div class="saved-rental-feature">
+                            <i class="fas fa-bed"></i>
+                            ${bedrooms} bed${bedrooms !== 1 ? 's' : ''}
+                        </div>` : ''}
+                        ${bathrooms > 0 ? `<div class="saved-rental-feature">
+                            <i class="fas fa-bath"></i>
+                            ${bathrooms} bath${bathrooms !== 1 ? 's' : ''}
+                        </div>` : ''}
+                        ${accommodates > 0 ? `<div class="saved-rental-feature">
+                            <i class="fas fa-users"></i>
+                            ${accommodates} guest${accommodates !== 1 ? 's' : ''}
+                        </div>` : ''}
+                    </div>
+                    <div class="saved-rental-price">${price}/night</div>
+                    <div class="saved-rental-actions">
+                        <button class="btn-saved-action" onclick="viewSavedRental('${saved.rental_id}')">
+                            <i class="fas fa-eye"></i>
+                            View Details
+                        </button>
+                        <button class="btn-saved-action primary ask-ai-btn" data-rental-id="${saved.rental_id}" data-property-name="${name}">
+                            <i class="fas fa-robot"></i>
+                            Ask AI
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Add event listeners for "Ask AI" buttons
+    setTimeout(() => {
+        const askAIButtons = document.querySelectorAll('.ask-ai-btn');
+        askAIButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const rentalId = this.dataset.rentalId;
+                const propertyName = this.dataset.propertyName;
+                askAIAboutSaved(rentalId, propertyName);
+            });
+        });
+    }, 100);
+}
+
+// Save a rental
+async function saveRental(rentalId, rentalData = null) {
+    if (!AppState.authToken) {
+        showSignInModal();
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/saved-rentals/${rentalId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${AppState.authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Update heart button if visible
+            updateHeartButton(rentalId, true);
+            
+            // Show success message
+            addAIMessage(`✅ Property saved! You can find it in your saved rentals tab.`);
+            
+            return true;
+        } else {
+            throw new Error(data.error || 'Failed to save rental');
+        }
+    } catch (error) {
+        console.error('Error saving rental:', error);
+        addAIMessage(`❌ Failed to save property: ${error.message}`);
+        return false;
+    }
+}
+
+// Unsave a rental
+async function unsaveRental(rentalId) {
+    if (!AppState.authToken) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/saved-rentals/${rentalId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${AppState.authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Remove from saved rentals view if currently shown
+            const savedCard = document.querySelector(`[data-rental-id="${rentalId}"]`);
+            if (savedCard) {
+                savedCard.remove();
+                
+                // Check if grid is now empty
+                const savedGrid = document.getElementById('savedRentalsGrid');
+                const emptyState = document.getElementById('emptySavedState');
+                if (savedGrid && savedGrid.children.length === 0) {
+                    savedGrid.style.display = 'none';
+                    if (emptyState) emptyState.style.display = 'block';
+                }
+            }
+            
+            // Update heart button if visible
+            updateHeartButton(rentalId, false);
+            
+            // Show success message
+            addAIMessage(`Property removed from saved list.`);
+            
+            return true;
+        } else {
+            throw new Error(data.error || 'Failed to remove rental');
+        }
+    } catch (error) {
+        console.error('Error unsaving rental:', error);
+        addAIMessage(`❌ Failed to remove property: ${error.message}`);
+        return false;
+    }
+}
+
+// Check if rental is saved and update heart button
+async function checkIfRentalSaved(rentalId) {
+    if (!AppState.authToken) {
+        return false;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/auth/saved-rentals/${rentalId}/check`, {
+            headers: {
+                'Authorization': `Bearer ${AppState.authToken}`
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            updateHeartButton(rentalId, data.is_saved);
+            return data.is_saved;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error('Error checking saved status:', error);
+        return false;
+    }
+}
+
+// Update heart button appearance
+function updateHeartButton(rentalId, isSaved) {
+    const heartButtons = document.querySelectorAll(`[data-rental-id="${rentalId}"] .save-rental-btn`);
+    heartButtons.forEach(btn => {
+        const icon = btn.querySelector('i');
+        if (icon) {
+            icon.className = isSaved ? 'fas fa-heart' : 'far fa-heart';
+            btn.style.color = isSaved ? '#ff5a5f' : '#666';
+            btn.title = isSaved ? 'Remove from saved' : 'Save rental';
+        }
+    });
+}
+
+// View saved rental details
+function viewSavedRental(rentalId) {
+    // For now, just show a message to use the AI assistant
+    addAIMessage(`To get detailed information about this property, try asking me: "Tell me more about the property ${rentalId}" or "Show me details for this saved rental."`);
+    
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+}
+
+// Ask AI about a saved rental
+function askAIAboutSaved(rentalId, propertyName) {
+    // Ensure AI assistant is visible first
+    if (!AppState.aiAssistantVisible) {
+        toggleAssistant();
+    }
+    
+    // Wait for the assistant to be visible, then set the message
+    setTimeout(() => {
+        const input = document.getElementById('chatInput');
+        if (input) {
+            // Create a more specific prompt that triggers the getSavedRentals tool
+            input.value = `Show me my saved rentals with full details and help me compare "${propertyName}" with my other saved properties. What do you recommend?`;
+            
+            // Trigger the message send
+            sendMessage();
+        }
+    }, 300); // Small delay to ensure UI is ready
+}
+
+// Add heart buttons to rental cards when rendering
+const originalRenderRentals = renderRentals;
+renderRentals = function(rentals) {
+    const grid = document.getElementById('resultsGrid');
+    if (!grid) return;
+    
+    if (rentals.length === 0) {
+        grid.innerHTML = '<div class="no-results">No rentals found. Try adjusting your search criteria.</div>';
+        return;
+    }
+    
+    grid.innerHTML = rentals.map(rental => {
+        const location = rental.address ? 
+            `${rental.address.neighbourhood || rental.address.market || ''}, ${rental.address.country || ''}`.replace(/^, /, '') : 
+            'Location not available';
+        
+        const rating = rental.review_scores?.review_scores_rating ? 
+            (rental.review_scores.review_scores_rating / 20).toFixed(1) : 
+            null;
+        
+        return `
+            <div class="rental-card" onclick="selectRental('${rental._id}')" data-rental-id="${rental._id}">
+                <div class="rental-image">
+                    ${(rental.images?.thumbnail_url || rental.images?.picture_url) ? 
+                        `<img src="${rental.images.thumbnail_url || rental.images.picture_url}" alt="${rental.name}" />` : 
+                        '<div class="placeholder-image">No Image</div>'}
+                    ${rental.host?.host_is_superhost ? '<div class="rental-badge">Superhost</div>' : ''}
+                    ${AppState.authToken ? `
+                        <button class="save-rental-btn" onclick="event.stopPropagation(); toggleSaveRental('${rental._id}')" title="Save rental">
+                            <i class="far fa-heart"></i>
+                        </button>
+                    ` : ''}
+                </div>
+                <div class="rental-content">
+                    <div class="rental-header">
+                        <div>
+                            <div class="rental-title">${rental.name}</div>
+                            <div class="rental-location">${location}</div>
+                        </div>
+                        ${rating ? `
+                            <div class="rental-rating">
+                                <i class="fas fa-star"></i>
+                                ${rating}
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="rental-features">
+                        ${rental.bedrooms ? `<span>${rental.bedrooms} bed${rental.bedrooms !== 1 ? 's' : ''}</span>` : ''}
+                        ${rental.bathrooms ? `<span>${rental.bathrooms} bath${rental.bathrooms !== 1 ? 's' : ''}</span>` : ''}
+                        ${rental.accommodates ? `<span>${rental.accommodates} guest${rental.accommodates !== 1 ? 's' : ''}</span>` : ''}
+                    </div>
+                    <div class="rental-price">
+                        <span class="price">$${rental.price}</span>
+                        <span class="price-period">per night</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Check saved status for each rental if user is authenticated
+    if (AppState.authToken) {
+        rentals.forEach(rental => {
+            checkIfRentalSaved(rental._id);
+        });
+    }
+};
+
+// Toggle save rental
+async function toggleSaveRental(rentalId) {
+    if (!AppState.authToken) {
+        showSignInModal();
+        return;
+    }
+    
+    // Check current saved status
+    const isSaved = await checkIfRentalSaved(rentalId);
+    
+    if (isSaved) {
+        await unsaveRental(rentalId);
+    } else {
+        await saveRental(rentalId);
+    }
+}
+
+// Add CSS for save button
+const saveButtonStyles = `
+    .rental-card {
+        position: relative;
+    }
+    
+    .save-rental-btn {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        background: rgba(255, 255, 255, 0.9);
+        border: none;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+        z-index: 10;
+    }
+    
+    .save-rental-btn:hover {
+        background: white;
+        transform: scale(1.1);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+    
+    .save-rental-btn i.fas.fa-heart {
+        color: #ff5a5f;
+    }
+`;
+
+// Inject save button styles
+const styleSheet = document.createElement('style');
+styleSheet.textContent = saveButtonStyles;
+document.head.appendChild(styleSheet);
+
+// Functions for auth modal callbacks
+function showSignIn() {
+    showSignInModal();
+}
+
+function showSignUp() {
+    showSignUpModal();
+}

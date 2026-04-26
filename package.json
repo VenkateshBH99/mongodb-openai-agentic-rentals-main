@@ -1,0 +1,38 @@
+{
+  "name": "rental-app-api",
+  "version": "1.0.0",
+  "description": "AI-powered rental app API built with Elysia.js and MongoDB Atlas",
+  "main": "server.js",
+  "scripts": {
+    "start": "bun run src/server.js",
+    "dev": "bun run --watch src/server.js",
+    "analyze": "node analyze-schema.js",
+    "import": "node bulk-insert-rentals.js"
+  },
+  "dependencies": {
+    "@elysiajs/static": "^1.0.0",
+    "@elysiajs/swagger": "^1.0.0",
+    "@huggingface/hub": "^2.6.2",
+    "@ngneat/falso": "^7.2.0",
+    "@openai/agents": "^0.1.0",
+    "axios": "^1.11.0",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^16.3.1",
+    "elysia": "^1.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.3.0",
+    "node-fetch": "^3.3.2",
+    "openai": "^4.0.0",
+    "zod": "^3.22.0"
+  },
+  "keywords": [
+    "elysia",
+    "mongodb",
+    "atlas",
+    "rental",
+    "api",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT"
+}

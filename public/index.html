@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AirBnB - MLP Fusion Rental Recommendations</title>
+    <link rel="stylesheet" href="styles.css?v=3">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-inner">
+        <a href="#" class="nav-brand" onclick="switchTab('explore');return false">
+            <i class="fas fa-home"></i> <span class="logo">AirBnB</span>
+        </a>
+        <nav class="nav-menu">
+            <a href="#" class="nav-link active" data-tab="explore"><i class="fas fa-compass"></i> Explore</a>
+            <a href="#" class="nav-link" data-tab="recommendations"><i class="fas fa-brain"></i> Recommendations</a>
+            <a href="#" class="nav-link" data-tab="stats"><i class="fas fa-chart-bar"></i> Stats</a>
+        </nav>
+        <span class="model-badge"><i class="fas fa-microchip"></i> MLP Fusion</span>
+    </div>
+</header>
+
+<!-- ==================== EXPLORE TAB ==================== -->
+<div id="exploreTab">
+
+    <!-- Hero with Search -->
+    <section class="hero">
+        <div class="hero-inner">
+            <h1>Smart Rental Discovery</h1>
+            <p>Multi-modal recommendations &mdash; structured + text + image features</p>
+            <div class="search-bar">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search by name, location, property type, amenity..." />
+                    <button id="searchBtn" onclick="doSearch()"><i class="fas fa-search"></i> Search</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters + Active query chip -->
+    <section class="filters-bar">
+        <div class="filters-inner">
+            <div class="filter-group">
+                <label for="filterType">Type</label>
+                <select id="filterType">
+                    <option value="">All Types</option>
+                    <option value="Apartment">Apartment</option>
+                    <option value="House">House</option>
+                    <option value="Condominium">Condominium</option>
+                    <option value="Loft">Loft</option>
+                    <option value="Townhouse">Townhouse</option>
+                    <option value="Villa">Villa</option>
+                    <option value="Hostel">Hostel</option>
+                    <option value="Guest suite">Guest suite</option>
+                    <option value="Bed and breakfast">B&amp;B</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Price</label>
+                <div class="price-inputs">
+                    <input type="number" id="filterMinPrice" placeholder="Min" min="0" />
+                    <span class="sep">-</span>
+                    <input type="number" id="filterMaxPrice" placeholder="Max" min="0" />
+                </div>
+            </div>
+            <div class="filter-group">
+                <label for="filterBeds">Beds</label>
+                <select id="filterBeds">
+                    <option value="">Any</option>
+                    <option value="1">1+</option>
+                    <option value="2">2+</option>
+                    <option value="3">3+</option>
+                    <option value="4">4+</option>
+                    <option value="5">5+</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filterSort">Sort</label>
+                <select id="filterSort">
+                    <option value="price_asc">Price: Low to High</option>
+                    <option value="price_desc">Price: High to Low</option>
+                    <option value="name">Name A-Z</option>
+                </select>
+            </div>
+            <div class="filter-actions">
+                <button class="btn btn-primary btn-sm" onclick="applyFilters()"><i class="fas fa-filter"></i> Apply</button>
+                <button class="btn btn-outline btn-sm" onclick="resetAll()"><i class="fas fa-undo"></i> Reset</button>
+            </div>
+        </div>
+        <div id="activeChips" class="active-chips" style="display:none"></div>
+    </section>
+
+    <!-- Results -->
+    <section class="results-section">
+            <div class="results-header">
+                <h2 id="resultsTitle">Available Rentals</h2>
+                <span id="resultsCount" class="results-count"></span>
+            </div>
+            <div id="loadingSpinner" class="loader" style="display:none">
+                <div class="spinner"></div>
+                <p>Loading rentals...</p>
+            </div>
+            <div id="resultsGrid" class="grid"></div>
+            <div id="pagination" class="pagination"></div>
+    </section>
+</div>
+
+<!-- ==================== RECOMMENDATIONS TAB ==================== -->
+<div id="recommendationsTab" style="display:none">
+    <section class="rec-section">
+            <div class="rec-header">
+                <h1><i class="fas fa-brain"></i> MLP Fusion Recommendations</h1>
+                <p>Personalized picks using multi-modal MLP &mdash; structured (101d) + TF-IDF text (500d) + CLIP image (512d)</p>
+            </div>
+
+            <!-- User-based recommendations -->
+            <div class="rec-card">
+                <h3><i class="fas fa-user"></i> User-Based Recommendations</h3>
+                <div class="rec-form">
+                    <input type="text" id="recUserId" placeholder="Enter User ID (e.g. 51483096)" />
+                    <div class="rec-topk">
+                        <label for="recTopK">Top-K:</label>
+                        <select id="recTopK">
+                            <option value="5">5</option>
+                            <option value="10" selected>10</option>
+                            <option value="15">15</option>
+                            <option value="20">20</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="loadRecommendations()"><i class="fas fa-magic"></i> Get Recommendations</button>
+                </div>
+            </div>
+
+            <!-- Multi-modal search: image + text + struct -->
+            <div class="rec-card multimodal-card">
+                <h3><i class="fas fa-layer-group"></i> Multi-Modal Search</h3>
+                <p class="rec-card-desc">Combine any or all modalities — image, text description, and structural filters — the model fuses them through the MLP pipeline.</p>
+
+                <div class="mm-grid">
+                    <!-- Image input -->
+                    <div class="mm-col">
+                        <label class="mm-label"><i class="fas fa-image"></i> Image (CLIP 512d)</label>
+                        <div class="upload-area" id="uploadArea">
+                            <input type="file" id="imageUpload" accept="image/*" style="display:none" />
+                            <div id="uploadPlaceholder" class="upload-placeholder" onclick="document.getElementById('imageUpload').click()">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <span>Click or drag image</span>
+                                <small>JPG, PNG up to 10MB</small>
+                            </div>
+                            <div id="uploadPreview" class="upload-preview" style="display:none">
+                                <img id="previewImg" alt="Preview" />
+                                <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();clearUpload()"><i class="fas fa-times"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Text input -->
+                    <div class="mm-col">
+                        <label class="mm-label"><i class="fas fa-font"></i> Text Query (TF-IDF 500d)</label>
+                        <textarea id="mmText" class="mm-textarea" rows="3" placeholder="Describe what you're looking for...&#10;e.g. cozy apartment near the beach with wifi"></textarea>
+
+                        <label class="mm-label" style="margin-top:12px"><i class="fas fa-table"></i> Structural Filters (101d)</label>
+                        <div class="mm-filters">
+                            <select id="mmType">
+                                <option value="">Any Type</option>
+                                <option value="Apartment">Apartment</option>
+                                <option value="House">House</option>
+                                <option value="Condominium">Condo</option>
+                                <option value="Loft">Loft</option>
+                                <option value="Townhouse">Townhouse</option>
+                                <option value="Villa">Villa</option>
+                                <option value="Hostel">Hostel</option>
+                            </select>
+                            <select id="mmBeds">
+                                <option value="">Any Beds</option>
+                                <option value="1">1+</option>
+                                <option value="2">2+</option>
+                                <option value="3">3+</option>
+                                <option value="4">4+</option>
+                            </select>
+                            <input type="number" id="mmMinPrice" placeholder="Min $" min="0" />
+                            <input type="number" id="mmMaxPrice" placeholder="Max $" min="0" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="mm-actions">
+                    <div class="mm-modality-indicators" id="mmIndicators">
+                        <!-- filled dynamically -->
+                    </div>
+                    <div class="mm-right">
+                        <div class="rec-topk">
+                            <label for="uploadTopK">Top-K:</label>
+                            <select id="uploadTopK">
+                                <option value="5">5</option>
+                                <option value="10" selected>10</option>
+                                <option value="15">15</option>
+                                <option value="20">20</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" onclick="searchMultimodal()"><i class="fas fa-bolt"></i> Fuse &amp; Search</button>
+                        <button class="btn btn-outline btn-sm" onclick="clearMultimodal()"><i class="fas fa-undo"></i> Clear</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model architecture info -->
+            <div class="rec-card arch-card" id="archCard">
+                <h3><i class="fas fa-project-diagram"></i> Model Architecture</h3>
+                <div class="arch-flow">
+                    <div class="arch-inputs">
+                        <div class="arch-block struct"><i class="fas fa-table"></i> Structured<br><small>101d</small></div>
+                        <div class="arch-block tfidf"><i class="fas fa-font"></i> TF-IDF Text<br><small>500d</small></div>
+                        <div class="arch-block clip"><i class="fas fa-image"></i> CLIP Image<br><small>512d</small></div>
+                    </div>
+                    <div class="arch-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="arch-block concat">Concat &rarr; 1113d item emb</div>
+                    <div class="arch-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="arch-block mlp">User(1113d) || Item(1113d) &rarr; MLP(2226&rarr;512&rarr;256&rarr;128&rarr;1)</div>
+                    <div class="arch-arrow"><i class="fas fa-arrow-down"></i></div>
+                    <div class="arch-block out">&sigma; Relevance Score (0-1)</div>
+                </div>
+                <p class="arch-note">BatchNorm + ReLU + Dropout at each layer | Trained with BCE loss</p>
+            </div>
+
+            <!-- User history -->
+            <div id="userHistoryPanel" style="display:none" class="rec-card">
+                <h3><i class="fas fa-history"></i> User Interaction History</h3>
+                <div id="userHistoryGrid" class="hist-scroll"></div>
+            </div>
+
+            <!-- Loading / empty -->
+            <div id="recLoading" class="loader" style="display:none">
+                <div class="spinner"></div>
+                <p>Running MLP inference on 4,545 listings...</p>
+            </div>
+
+            <!-- Metadata -->
+            <div id="recMeta" class="rec-meta" style="display:none"></div>
+
+            <!-- Results grid -->
+            <div id="recResultsGrid" class="grid"></div>
+    </section>
+</div>
+
+<!-- ==================== STATS TAB ==================== -->
+<div id="statsTab" style="display:none">
+    <section class="stats-section">
+            <h2><i class="fas fa-chart-bar"></i> Dataset &amp; Model Statistics</h2>
+            <div id="statsContent"></div>
+    </section>
+</div>
+
+<!-- ==================== DETAIL MODAL ==================== -->
+<div id="rentalModal" style="display:none">
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        <div id="modalBody"></div>
+    </div>
+</div>
+
+<script src="script.js?v=3"></script>
+</body>
+</html>
